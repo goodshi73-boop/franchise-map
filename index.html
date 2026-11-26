@@ -39,6 +39,10 @@ button{cursor:pointer}
 .mk{position:relative;display:flex;flex-direction:column;align-items:center;cursor:pointer;transform:translateY(2px)}
 .mk .pin{width:34px;height:34px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:#fff;border:3px solid var(--sc);display:grid;place-items:center;box-shadow:0 2px 5px rgba(0,0,0,.25);position:relative}
 .mk .pin span{transform:rotate(45deg);width:22px;height:22px;border-radius:50%;color:#fff;font-size:12px;font-weight:800;display:grid;place-items:center}
+.mk .pin.logo{width:40px;height:40px}
+.mk .pin.logo span{width:30px;height:30px;background:#fff!important;overflow:hidden}
+.mk .pin.logo img{width:28px;height:28px;object-fit:contain;display:block}
+#legend .lg{width:20px;height:20px;object-fit:contain;flex:none}
 .mk .dot{position:absolute;top:-4px;right:-4px;width:11px;height:11px;border-radius:50%;background:#e03131;border:2px solid #fff;transform:rotate(45deg)}
 .mk .lb{margin-top:3px;background:#fff;color:#1b2430;border:1.5px solid var(--bc);border-radius:999px;padding:1px 9px;font-size:12px;font-weight:700;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.18)}
 .mk.planned .pin{border-style:dashed}
@@ -253,6 +257,8 @@ function ask(msg, yes){ return new Promise(res=>{ $('cmsg').textContent=msg; $('
   const done=v=>{ $('confirm').classList.add('hide'); $('cyes').onclick=$('cno').onclick=null; res(v); };
   $('cyes').onclick=()=>done(true); $('cno').onclick=()=>done(false); }); }
 const isAdmin = () => S.user && S.user.role === 'admin';
+// 브랜드별 지도 아이콘 (파일이 없으면 글자로 표시)
+const LOGO = { '호랑이족발':'logo-horangi.png', '명가 들기름김치찜':'logo-myeongga.png' };
 const brandOf = n => S.brands.find(b => b.name === n);
 const statusOf = n => S.statuses.find(s => s.name === n);
 function km(m){ return m >= 1000 ? (m/1000).toFixed(m >= 10000 ? 0 : 1).replace(/\.0$/,'') + 'km' : Math.round(m) + 'm'; }
@@ -372,7 +378,8 @@ function render(fit){
     const pos=new kakao.maps.LatLng(s.lat, s.lng);
     const el=document.createElement('div');
     el.className='mk'+(s.planned?' planned':'')+(S.sel===s.id?' sel':'');
-    el.innerHTML=`<div class="pin" style="--sc:${sc}"><span style="background:${bc}">${esc(b?b.abbr:'?')}</span>${isAdmin()&&expSoon(s)?'<i class="dot"></i>':''}</div><div class="lb" style="--bc:${bc}">${esc(s.name)}</div>`;
+    const lg=LOGO[s.brand];
+    el.innerHTML=`<div class="pin${lg?' logo':''}" style="--sc:${sc}"><span style="background:${bc}">${lg?`<img src="${lg}" alt="">`:esc(b?b.abbr:'?')}</span>${isAdmin()&&expSoon(s)?'<i class="dot"></i>':''}</div><div class="lb" style="--bc:${bc}">${esc(s.name)}</div>`;
     el.addEventListener('click', ev=>{ ev.stopPropagation(); openStore(s.id); });
     const ov=new kakao.maps.CustomOverlay({ position:pos, content:el, yAnchor:1, clickable:true, zIndex:3 });
     const circle=new kakao.maps.Circle({ center:pos, radius:b?b.radius:1000, strokeWeight:1.5, strokeColor:bc, strokeOpacity:.85,
@@ -389,7 +396,7 @@ function render(fit){
   $('bFilter').classList.toggle('on', S.f.region!=='전체' || S.f.st.size!==def.length || def.some(n=>!S.f.st.has(n)));
 }
 function legend(){
-  $('lgBrand').innerHTML='<h4>상권 반경 (원 색)</h4>'+S.brands.map(b=>`<div class="row"><span class="c" style="background:${okColor(b.color)}"></span>${esc(b.name)} · ${km(b.radius)}</div>`).join('');
+  $('lgBrand').innerHTML='<h4>상권 반경 (원 색)</h4>'+S.brands.map(b=>`<div class="row">${LOGO[b.name]?`<img class="lg" src="${LOGO[b.name]}" alt="">`:''}<span class="c" style="background:${okColor(b.color)}"></span>${esc(b.name)} · ${km(b.radius)}</div>`).join('');
   $('lgStatus').innerHTML='<h4>매장 상태 (아이콘 테두리)</h4>'+S.statuses.map(s=>`<div class="row"><span class="ring" style="border-color:${okColor(s.color)}"></span>${esc(s.name)}${s.judge?'':' <span style="color:#98a">(판정 제외)</span>'}</div>`).join('');
   $('lgEtc').innerHTML=isAdmin()?`<div class="row"><span class="c" style="background:#e03131;width:10px;height:10px"></span>계약만료 ${S.alertDays}일 이내</div>`:'<div class="row" style="color:#5b6573">지도를 누르면 오픈 가능 여부를 알려줍니다</div>';
 }
@@ -589,18 +596,30 @@ $('bAdd').onclick=()=>openForm(null);
 async function fillMissingCoords(){
   const todo=S.stores.filter(s=>(!Number.isFinite(s.lat)||!Number.isFinite(s.lng)) && s.addr);
   if(!todo.length) return;
-  toast(`위치가 비어 있는 매장 ${todo.length}곳의 좌표를 찾는 중…`, 5000);
-  const found=[], fail=[];
+  toast(`위치가 비어 있는 매장 ${todo.length}곳의 좌표를 찾는 중…`, 8000);
+  const OK=kakao.maps.services.Status.OK, found=[], fail=[];
+  const find=q=>new Promise(res=>{
+    let done=false; const end=v=>{ if(!done){ done=true; res(v); } };
+    setTimeout(()=>end(null), 5000);   // 응답이 없으면 5초 뒤 건너뜀
+    try{
+      geocoder.addressSearch(q, (r,st)=>{
+        if(st===OK && r[0]) return end([+r[0].y, +r[0].x]);
+        places.keywordSearch(q, (p,st2)=>end(st2===OK && p[0] ? [+p[0].y, +p[0].x] : null));
+      });
+    }catch(e){ end(null); }
+  });
   for(const s of todo){
-    await new Promise(res=>{
-      const OK=kakao.maps.services.Status.OK, done=(y,x)=>{ s.lat=+y; s.lng=+x; found.push({ id:s.id, lat:s.lat, lng:s.lng }); setTimeout(res,120); };
-      geocoder.addressSearch(s.addr, (r,st)=>{
-        if(st===OK && r[0]) return done(r[0].y, r[0].x);
-        places.keywordSearch(s.addr, (p,st2)=>{ if(st2===OK && p[0]) return done(p[0].y, p[0].x); fail.push(s.name); setTimeout(res,120); });
-      }); });
+    const c=await find(s.addr);
+    if(c){ s.lat=c[0]; s.lng=c[1]; found.push({ id:s.id, lat:s.lat, lng:s.lng }); } else fail.push(s.name);
+    await new Promise(r=>setTimeout(r,100));
   }
-  if(found.length){ try{ await api('coords', { items:found }); }catch(e){ toast(e.message); return; } render(false); }
-  toast(`좌표 자동 입력 ${found.length}곳`+(fail.length?` · 주소를 찾지 못한 매장: ${fail.join(', ')}`:''), 6000);
+  render(false);   // 저장 결과와 상관없이 먼저 지도에 그림
+  let saved=0, err='';
+  for(let i=0;i<found.length;i+=20){
+    try{ const j=await api('coords', { items:found.slice(i,i+20) }); saved+=j.count||0; }
+    catch(e){ err=e.message; break; }
+  }
+  toast(`좌표 자동 입력 ${saved}곳`+(err?` · 저장 중 오류: ${err} ([새로고침] 후 다시 로그인하면 이어서 저장됩니다)`:'')+(fail.length?` · 주소를 찾지 못한 매장: ${fail.join(', ')}`:''), 8000);
 }
 
 /* ── 필터 ── */
